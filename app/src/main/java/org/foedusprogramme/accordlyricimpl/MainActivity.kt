@@ -27,9 +27,9 @@ class MainActivity : AppCompatActivity() {
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.updateLayoutParams<ViewGroup.MarginLayoutParams> {
                 leftMargin = systemBars.left + v.marginLeft
-                topMargin = systemBars.top
+                topMargin = systemBars.top + v.marginTop
                 rightMargin = systemBars.right + v.marginRight
-                bottomMargin = systemBars.bottom
+                bottomMargin = systemBars.bottom + v.marginBottom
             }
             insets
         }
@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
                 Lyric("Tracing of sparrow on snow-crested brown"),
                 Lyric("Blankets and bedclothes the child of the mountain"),
                 Lyric("Sleeps unaware of the clarion call"),
+                Creator("Various Artists")
             )
         )
     }

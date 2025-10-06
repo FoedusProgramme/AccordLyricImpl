@@ -15,8 +15,15 @@ class LyricTextView(
     context: Context,
 ) : View(context) {
 
-    constructor(context: Context, lyric: Lyric) : this(context) {
-        this.lyric = lyric.content
+    constructor(context: Context, lyric: LyricBase) : this(context) {
+        when (lyric) {
+            is Lyric -> { this.lyric = lyric.content }
+            is Creator -> {
+                this.isHolding = true
+                this.lyric = "Written by: ${lyric.content}"
+                setCreatorContent()
+            }
+        }
     }
 
     private val horizontalMargin = 12.dp.px.toInt()
@@ -37,14 +44,42 @@ class LyricTextView(
         }
 
     var staticLayout: StaticLayout? = null
+    var isHolding: Boolean = false
 
     override fun onDraw(canvas: Canvas) {
         canvas.withTranslation(
             horizontalMargin.toFloat(),
             verticalMargin.toFloat()
         ) {
-            staticLayout?.draw(this)
+            drawContentLayer(canvas)
         }
+    }
+
+    private fun drawContentLayer(canvas: Canvas) {
+        val overlayAlpha =
+            if (isHolding)
+                HOLDING_OVERLAY_TRANSPARENCY
+            else
+                INACTIVE_OVERLAY_TRANSPARENCY
+
+        val shadeAlpha =
+            if (isHolding)
+                HOLDING_SHADE_TRANSPARENCY
+            else
+                INACTIVE_SHADE_TRANSPARENCY
+
+        staticLayout.let { if (it == null) return@drawContentLayer }
+        staticLayout?.paint?.apply {
+            blendMode = BlendMode.OVERLAY
+            alpha = (overlayAlpha * 255).toInt()
+        }
+        staticLayout?.draw(canvas)
+
+        staticLayout?.paint?.apply {
+            blendMode = null
+            alpha = (shadeAlpha * 255).toInt()
+        }
+        staticLayout?.draw(canvas)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -94,8 +129,22 @@ class LyricTextView(
         Log.d("TAG", "value: $value, $measuredWidth")
     }
 
+    private fun setCreatorContent() {
+        lyricPaint.apply {
+            textSize = 24.sp.px
+            typeface = resources.getFont(R.font.inter_semibold)
+        }
+    }
+
     companion object {
-        const val SHADE_TRANSPARENCY = .85F
+        const val ACTIVE_SHADE_TRANSPARENCY = .85F
+        const val ACTIVE_OVERLAY_TRANSPARENCY = 1F
+
+        const val INACTIVE_SHADE_TRANSPARENCY = .25F
+        const val INACTIVE_OVERLAY_TRANSPARENCY = .3F
+
+        const val HOLDING_SHADE_TRANSPARENCY = .45F
+        const val HOLDING_OVERLAY_TRANSPARENCY = .75F
     }
 
 }
