@@ -36,6 +36,17 @@ class MainActivity : AppCompatActivity() {
 
         lyricViewGroup.updateLyrics(
             listOf(
+                SyncedLyric(listOf(
+                    Lyric("I "),
+                    Lyric("don't "),
+                    Lyric("need "),
+                    Lyric("no "),
+                    Lyric("light "),
+                    Lyric("to "),
+                    Lyric("see "),
+                    Lyric("you "),
+                    Lyric("shine "),
+                )),
                 Lyric("Are you going to Scarborough Fair"),
                 Lyric("Parsley, sage, rosemary and thyme"),
                 Lyric("Remember me to one who lives there"),

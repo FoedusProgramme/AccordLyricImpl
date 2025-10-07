@@ -6,6 +6,10 @@ data class Lyric(
     val content: String
 ) : LyricBase()
 
+data class SyncedLyric(
+    val list: List<Lyric>
+) : LyricBase()
+
 data class Creator(
     val content: String
 ) : LyricBase()

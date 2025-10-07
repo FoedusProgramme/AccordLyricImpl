@@ -10,6 +10,7 @@ import android.text.TextPaint
 import android.util.Log
 import android.view.View
 import androidx.core.graphics.withTranslation
+import androidx.core.graphics.withSave
 
 class LyricTextView(
     context: Context,
@@ -18,6 +19,9 @@ class LyricTextView(
     constructor(context: Context, lyric: LyricBase) : this(context) {
         when (lyric) {
             is Lyric -> { this.lyric = lyric.content }
+            is SyncedLyric -> {
+                this.syncedLyric = lyric
+            }
             is Creator -> {
                 this.isHolding = true
                 this.lyric = "Written by: ${lyric.content}"
@@ -30,7 +34,7 @@ class LyricTextView(
     private val verticalMargin = 8.dp.px.toInt()
 
     private val lyricPaint = TextPaint().apply {
-        textSize = 38.sp.px
+        textSize = NORMAL_TEXT_SIZE.sp.px
         color = Color.WHITE
         blendMode = BlendMode.OVERLAY
         typeface = resources.getFont(R.font.inter_bold)
@@ -42,6 +46,14 @@ class LyricTextView(
             requestLayout()
             invalidate()
         }
+        get() {
+            syncedLyric?.let {
+                return it.list.joinToString(separator = "") { lyric -> lyric.content }
+            }
+            return field
+        }
+
+    var syncedLyric: SyncedLyric? = null
 
     var staticLayout: StaticLayout? = null
     var isHolding: Boolean = false
@@ -52,6 +64,92 @@ class LyricTextView(
             verticalMargin.toFloat()
         ) {
             drawContentLayer(canvas)
+            if (syncedLyric != null) {
+                drawHighlightLayer(canvas)
+            }
+        }
+    }
+
+    private var charProgress: FloatArray? = null
+    private var itemStartOffsets: IntArray? = null
+
+    private fun buildItemOffsets() {
+        val synced = syncedLyric ?: return
+        val offsets = IntArray(synced.list.size)
+        var current = 0
+        synced.list.forEachIndexed { i, lyric ->
+            offsets[i] = current
+            current += lyric.content.length
+        }
+        itemStartOffsets = offsets
+        charProgress = FloatArray(synced.list.size) { 0f }
+    }
+
+    fun animate(itemPos: Int, fraction: Float) {
+        val synced = syncedLyric ?: return
+
+        if (charProgress == null || charProgress?.size != synced.list.size) {
+            buildItemOffsets()
+        }
+
+        charProgress?.let {
+            if (itemPos in it.indices) {
+                it[itemPos] = fraction.coerceIn(0f, 1f)
+            }
+        }
+
+        invalidate()
+    }
+
+    val paint = TextPaint().apply {
+        textSize = NORMAL_TEXT_SIZE.sp.px
+        color = Color.WHITE
+        typeface = resources.getFont(R.font.inter_bold)
+    }
+
+    private fun drawHighlightLayer(canvas: Canvas) {
+        val text = lyric
+        val layout = staticLayout ?: return
+        val progress = charProgress ?: return
+        val offsets = itemStartOffsets ?: return
+        val synced = syncedLyric ?: return
+
+        for (line in 0 until layout.lineCount) {
+            val start = layout.getLineStart(line)
+            val end = layout.getLineEnd(line)
+            var x = layout.getLineLeft(line)
+            val baseY = layout.getLineBaseline(line).toFloat()
+
+            for (itemIndex in synced.list.indices) {
+                val itemStart = offsets[itemIndex]
+                val itemText = synced.list[itemIndex].content
+                val itemEnd = itemStart + itemText.length
+
+                if (itemEnd <= start || itemStart >= end) continue
+
+                val subStart = maxOf(start, itemStart)
+                val subEnd = minOf(end, itemEnd)
+                val visibleText = text.substring(subStart, subEnd)
+
+                val width = paint.measureText(visibleText)
+                val trailingWidth =
+                    if (visibleText.endsWith(' '))
+                        paint.measureText(visibleText.substringAfterLast(" ") + " ")
+                    else
+                        0F
+                val finalWidth = width - trailingWidth
+
+                val p = progress[itemIndex]
+
+                if (p > 0f) {
+                    canvas.withSave {
+                        clipRect(x, baseY - paint.textSize, x + finalWidth * p, baseY + paint.descent())
+                        drawText(visibleText, x, baseY, paint)
+                    }
+                }
+
+                x += width
+            }
         }
     }
 
@@ -126,12 +224,14 @@ class LyricTextView(
             .setLineSpacing(0F, 1F)
             .setIncludePad(false)
             .build()
-        Log.d("TAG", "value: $value, $measuredWidth")
+        if (syncedLyric != null) {
+            buildItemOffsets()
+        }
     }
 
     private fun setCreatorContent() {
         lyricPaint.apply {
-            textSize = 24.sp.px
+            textSize = BG_TEXT_SIZE.sp.px
             typeface = resources.getFont(R.font.inter_semibold)
         }
     }
@@ -145,6 +245,9 @@ class LyricTextView(
 
         const val HOLDING_SHADE_TRANSPARENCY = .45F
         const val HOLDING_OVERLAY_TRANSPARENCY = .75F
+
+        const val NORMAL_TEXT_SIZE = 34
+        const val BG_TEXT_SIZE = 24
     }
 
 }
