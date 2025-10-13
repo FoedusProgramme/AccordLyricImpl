@@ -37,6 +37,18 @@ class MainActivity : AppCompatActivity() {
         lyricViewGroup.updateLyrics(
             listOf(
                 SyncedLyric(listOf(
+                    /*
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                    Lyric("TEST "),
+                     */
                     Lyric("你知道吗："),
                     Lyric("这段文"),
                     Lyric("字其实没有"),

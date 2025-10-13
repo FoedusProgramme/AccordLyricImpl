@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.Log
 import android.view.View
 import androidx.core.graphics.withTranslation
 
@@ -78,7 +79,6 @@ class LyricTextView(
             calculateTargetPosition(animationUnit)
         }
         animationFraction = fraction
-
         invalidate()
     }
 
@@ -95,6 +95,33 @@ class LyricTextView(
 
         startOffsetInLinePx = layout.getPrimaryHorizontal(startOffsetChar)
         endOffsetInLinePx = layout.getPrimaryHorizontal(endOffsetChar)
+
+        // This is because the target has reached next
+        // line but visually it does not, therefore we
+        // need to recalculate the endOffset.
+        if (endOffsetInLinePx == 0F) {
+            endLine --
+            endOffsetInLinePx = layout.getLineRight(endLine)
+        }
+
+        val lineArray = IntArray(endLine - startLine + 1)
+        for (line in startLine..endLine) {
+            if (startLine == endLine) {
+                lineArray[0] = (endOffsetInLinePx - startOffsetInLinePx).toInt()
+                break
+            }
+            if (line == startLine) {
+                lineArray[0] = (layout.getLineRight(line) - layout.getLineLeft(line) - startOffsetInLinePx).toInt()
+                continue
+            }
+            if (line == endLine) {
+                lineArray[endLine - startLine] = endOffsetInLinePx.toInt()
+                continue
+            }
+            lineArray[line - startLine] = (layout.getLineRight(line) - layout.getLineLeft(line)).toInt()
+        }
+        animationLinePx = LinePixels(lineArray)
+        Log.d("TAG", "line: $animationLinePx")
     }
 
     // Start line of current synced lyrics.
@@ -123,7 +150,7 @@ class LyricTextView(
     // lines
     private var animationLinePx: LinePixels? = null
 
-    data class LinePixels(
+    inner class LinePixels(
         val lineWidths: IntArray,
     ) {
         fun getTotalLineWidth() =
@@ -137,8 +164,8 @@ class LyricTextView(
                 if (accumulatingPixels + i < progressPixel) {
                     accumulatingPixels += i
                 } else {
-                    // We have find the target line
-                    return Pair(index, progressPixel - accumulatingPixels)
+                    // We have found the target line
+                    return Pair(startLine + index, progressPixel - accumulatingPixels)
                 }
             }
 
@@ -187,6 +214,7 @@ class LyricTextView(
     }
 
     private fun drawHighlightLayer(canvas: Canvas) {
+        drawHighlightText(canvas)
         // Draw already past line
         drawTextRange(canvas, 0, startOffsetChar)
         // Draw line that's animating
@@ -215,6 +243,35 @@ class LyricTextView(
 
             val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
             val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
+
+            canvas.save()
+            canvas.clipRect(startX, lineTop, endX, lineBottom)
+            layout.draw(canvas)
+            canvas.restore()
+        }
+    }
+
+    private fun drawHighlightText(canvas: Canvas) {
+        val layout = staticLayout ?: return
+        val linePx = animationLinePx ?: return
+
+        val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
+
+        layout.paint.apply {
+            blendMode = null
+            alpha = (shadeAlpha * 255).toInt()
+        }
+
+        val (activeLine, pixelProgress) = linePx.getLineAndProgress(animationFraction)
+
+        for (line in startLine..activeLine) {
+            val lineTop = layout.getLineTop(line).toFloat()
+            val lineBottom = layout.getLineBottom(line).toFloat()
+            val lineLeft = layout.getLineLeft(line)
+            val lineRight = layout.getLineRight(line)
+
+            val startX = if (line == startLine) startOffsetInLinePx else lineLeft
+            val endX = if (line == activeLine) startX + pixelProgress else lineRight
 
             canvas.save()
             canvas.clipRect(startX, lineTop, endX, lineBottom)
