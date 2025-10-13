@@ -7,10 +7,8 @@ import android.graphics.Color
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Log
 import android.view.View
 import androidx.core.graphics.withTranslation
-import androidx.core.graphics.withSave
 
 class LyricTextView(
     context: Context,
@@ -21,6 +19,7 @@ class LyricTextView(
             is Lyric -> { this.lyric = lyric.content }
             is SyncedLyric -> {
                 this.syncedLyric = lyric
+                finishedLiftupProgress = FloatArray(this.syncedLyric!!.list.size)
             }
             is Creator -> {
                 this.isHolding = true
@@ -70,86 +69,93 @@ class LyricTextView(
         }
     }
 
-    private var charProgress: FloatArray? = null
-    private var itemStartOffsets: IntArray? = null
-
-    private fun buildItemOffsets() {
-        val synced = syncedLyric ?: return
-        val offsets = IntArray(synced.list.size)
-        var current = 0
-        synced.list.forEachIndexed { i, lyric ->
-            offsets[i] = current
-            current += lyric.content.length
-        }
-        itemStartOffsets = offsets
-        charProgress = FloatArray(synced.list.size) { 0f }
-    }
+    private var animationUnit = -1
+    private var animationFraction = 0F
 
     fun animate(itemPos: Int, fraction: Float) {
-        val synced = syncedLyric ?: return
-
-        if (charProgress == null || charProgress?.size != synced.list.size) {
-            buildItemOffsets()
+        if (itemPos != animationUnit) {
+            animationUnit = itemPos
+            calculateTargetPosition(animationUnit)
         }
-
-        charProgress?.let {
-            if (itemPos in it.indices) {
-                it[itemPos] = fraction.coerceIn(0f, 1f)
-            }
-        }
+        animationFraction = fraction
 
         invalidate()
     }
 
-    val paint = TextPaint().apply {
-        textSize = NORMAL_TEXT_SIZE.sp.px
-        color = Color.WHITE
-        typeface = resources.getFont(R.font.inter_bold)
+    private fun calculateTargetPosition(itemPos: Int) {
+        val list = syncedLyric?.list ?: return
+        val layout = staticLayout ?: return
+
+        val substringBeforeTarget = list.take(itemPos).joinToString("") { it.content }
+        startOffsetChar = substringBeforeTarget.length
+        endOffsetChar = startOffsetChar + list[itemPos].content.length
+
+        startLine = layout.getLineForOffset(startOffsetChar)
+        endLine = layout.getLineForOffset(endOffsetChar)
+
+        startOffsetInLinePx = layout.getPrimaryHorizontal(startOffsetChar)
+        endOffsetInLinePx = layout.getPrimaryHorizontal(endOffsetChar)
     }
 
-    private fun drawHighlightLayer(canvas: Canvas) {
-        val text = lyric
-        val layout = staticLayout ?: return
-        val progress = charProgress ?: return
-        val offsets = itemStartOffsets ?: return
-        val synced = syncedLyric ?: return
+    // Start line of current synced lyrics.
+    private var startLine = -1
 
-        for (line in 0 until layout.lineCount) {
-            val start = layout.getLineStart(line)
-            val end = layout.getLineEnd(line)
-            var x = layout.getLineLeft(line)
-            val baseY = layout.getLineBaseline(line).toFloat()
+    // End line of current synced lyrics.
+    private var endLine = -1
 
-            for (itemIndex in synced.list.indices) {
-                val itemStart = offsets[itemIndex]
-                val itemText = synced.list[itemIndex].content
-                val itemEnd = itemStart + itemText.length
+    // Start offset to the left of current synced lyrics.
+    private var startOffsetInLinePx = -1F
 
-                if (itemEnd <= start || itemStart >= end) continue
+    // End offset to the left of current synced lyrics.
+    private var endOffsetInLinePx = -1F
 
-                val subStart = maxOf(start, itemStart)
-                val subEnd = minOf(end, itemEnd)
-                val visibleText = text.substring(subStart, subEnd)
+    // The string length of the subset of strings before
+    // current synced lyrics.
+    private var startOffsetChar = -1
 
-                val width = paint.measureText(visibleText)
-                val trailingWidth =
-                    if (visibleText.endsWith(' '))
-                        paint.measureText(visibleText.substringAfterLast(" ") + " ")
-                    else
-                        0F
-                val finalWidth = width - trailingWidth
+    // The string length from the start of total lyrics
+    // in this line till the end of the current synced
+    // lyrics.
+    private var endOffsetChar = -1
 
-                val p = progress[itemIndex]
+    // A helper class of current activated synced lyric
+    // which reports the detailed progress of animating
+    // lines
+    private var animationLinePx: LinePixels? = null
 
-                if (p > 0f) {
-                    canvas.withSave {
-                        clipRect(x, baseY - paint.textSize, x + finalWidth * p, baseY + paint.descent())
-                        drawText(visibleText, x, baseY, paint)
-                    }
+    data class LinePixels(
+        val lineWidths: IntArray,
+    ) {
+        fun getTotalLineWidth() =
+            lineWidths.sum()
+
+        fun getLineAndProgress(animationFraction: Float): Pair<Int, Float> {
+            val progressPixel = animationFraction * getTotalLineWidth()
+            var accumulatingPixels = 0
+
+            lineWidths.forEachIndexed { index, i ->
+                if (accumulatingPixels + i < progressPixel) {
+                    accumulatingPixels += i
+                } else {
+                    // We have find the target line
+                    return Pair(index, progressPixel - accumulatingPixels)
                 }
-
-                x += width
             }
+
+            throw IllegalArgumentException("This is not supposed to be happening!")
+        }
+
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (javaClass != other?.javaClass) return false
+
+            other as LinePixels
+
+            return lineWidths.contentEquals(other.lineWidths)
+        }
+
+        override fun hashCode(): Int {
+            return lineWidths.contentHashCode()
         }
     }
 
@@ -179,6 +185,44 @@ class LyricTextView(
         }
         staticLayout?.draw(canvas)
     }
+
+    private fun drawHighlightLayer(canvas: Canvas) {
+        // Draw already past line
+        drawTextRange(canvas, 0, startOffsetChar)
+        // Draw line that's animating
+    }
+
+    private var finishedLiftupProgress: FloatArray? = null
+
+    private fun drawTextRange(canvas: Canvas, startOffset: Int, endOffset: Int) {
+        val layout = staticLayout ?: return
+
+        val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
+
+        staticLayout?.paint?.apply {
+            blendMode = null
+            alpha = (shadeAlpha * 255).toInt()
+        }
+
+        val startLine = layout.getLineForOffset(startOffset)
+        val endLine = layout.getLineForOffset(endOffset)
+
+        for (line in startLine..endLine) {
+            val lineTop = layout.getLineTop(line).toFloat()
+            val lineBottom = layout.getLineBottom(line).toFloat()
+            val lineLeft = layout.getLineLeft(line)
+            val lineRight = layout.getLineRight(line)
+
+            val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
+            val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
+
+            canvas.save()
+            canvas.clipRect(startX, lineTop, endX, lineBottom)
+            layout.draw(canvas)
+            canvas.restore()
+        }
+    }
+
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val widthMode = MeasureSpec.getMode(widthMeasureSpec)
@@ -224,9 +268,6 @@ class LyricTextView(
             .setLineSpacing(0F, 1F)
             .setIncludePad(false)
             .build()
-        if (syncedLyric != null) {
-            buildItemOffsets()
-        }
     }
 
     private fun setCreatorContent() {
@@ -246,7 +287,7 @@ class LyricTextView(
         const val HOLDING_SHADE_TRANSPARENCY = .45F
         const val HOLDING_OVERLAY_TRANSPARENCY = .75F
 
-        const val NORMAL_TEXT_SIZE = 34
+        const val NORMAL_TEXT_SIZE = 32
         const val BG_TEXT_SIZE = 24
     }
 

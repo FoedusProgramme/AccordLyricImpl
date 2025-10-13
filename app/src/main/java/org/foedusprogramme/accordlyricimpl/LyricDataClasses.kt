@@ -3,7 +3,8 @@ package org.foedusprogramme.accordlyricimpl
 open class LyricBase
 
 data class Lyric(
-    val content: String
+    val content: String,
+    val isMagicLyric: Boolean = false
 ) : LyricBase()
 
 data class SyncedLyric(
