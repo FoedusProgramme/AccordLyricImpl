@@ -48,19 +48,10 @@ class LyricViewGroup @JvmOverloads constructor(
     private val durationMap: LongArray = longArrayOf(
         1500,
         1500,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
-        15000,
+        1500,
+        1500,
+        1500,
+        1500,
     )
 
     // TEST ONLY REMOVE IN PROD

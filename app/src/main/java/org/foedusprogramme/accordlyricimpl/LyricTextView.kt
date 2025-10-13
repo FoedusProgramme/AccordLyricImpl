@@ -63,9 +63,11 @@ class LyricTextView(
             horizontalMargin.toFloat(),
             verticalMargin.toFloat()
         ) {
-            drawContentLayer(canvas)
             if (syncedLyric != null) {
+                drawContentLayerWithProgress(canvas)
                 drawHighlightLayer(canvas)
+            } else {
+                drawContentLayer(canvas)
             }
         }
     }
@@ -186,6 +188,52 @@ class LyricTextView(
         }
     }
 
+    private fun drawContentLayerWithProgress(canvas: Canvas) {
+        val startOffset = startOffsetChar
+        val endOffset = lyric.length
+        val layout = staticLayout ?: return
+
+        val overlayAlpha =
+            if (isHolding)
+                HOLDING_OVERLAY_TRANSPARENCY
+            else
+                INACTIVE_OVERLAY_TRANSPARENCY
+
+        val shadeAlpha =
+            if (isHolding)
+                HOLDING_SHADE_TRANSPARENCY
+            else
+                INACTIVE_SHADE_TRANSPARENCY
+
+        val startLine = layout.getLineForOffset(startOffset)
+        val endLine = layout.getLineForOffset(endOffset)
+
+        for (line in startLine..endLine) {
+            val lineTop = layout.getLineTop(line).toFloat()
+            val lineBottom = layout.getLineBottom(line).toFloat()
+            val lineLeft = layout.getLineLeft(line)
+            val lineRight = layout.getLineRight(line)
+
+            val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
+            val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
+
+            canvas.save()
+            canvas.clipRect(startX, lineTop, endX, lineBottom)
+            staticLayout?.paint?.apply {
+                blendMode = BlendMode.OVERLAY
+                alpha = (overlayAlpha * 255).toInt()
+            }
+            staticLayout?.draw(canvas)
+
+            staticLayout?.paint?.apply {
+                blendMode = null
+                alpha = (shadeAlpha * 255).toInt()
+            }
+            staticLayout?.draw(canvas)
+            canvas.restore()
+        }
+    }
+
     private fun drawContentLayer(canvas: Canvas) {
         val overlayAlpha =
             if (isHolding)
@@ -246,6 +294,7 @@ class LyricTextView(
 
             canvas.save()
             canvas.clipRect(startX, lineTop, endX, lineBottom)
+            canvas.translate(0f, -10f)
             layout.draw(canvas)
             canvas.restore()
         }
@@ -344,7 +393,7 @@ class LyricTextView(
         const val HOLDING_SHADE_TRANSPARENCY = .45F
         const val HOLDING_OVERLAY_TRANSPARENCY = .75F
 
-        const val NORMAL_TEXT_SIZE = 32
+        const val NORMAL_TEXT_SIZE = 30
         const val BG_TEXT_SIZE = 24
     }
 
