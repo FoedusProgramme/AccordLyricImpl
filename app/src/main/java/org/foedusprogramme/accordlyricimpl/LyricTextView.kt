@@ -7,9 +7,9 @@ import android.graphics.Color
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Log
 import android.view.View
 import androidx.core.graphics.withTranslation
+import androidx.core.graphics.withClip
 
 class LyricTextView(
     context: Context,
@@ -20,7 +20,8 @@ class LyricTextView(
             is Lyric -> { this.lyric = lyric.content }
             is SyncedLyric -> {
                 this.syncedLyric = lyric
-                finishedLiftupProgress = FloatArray(this.syncedLyric!!.list.size)
+                liftupProgress = FloatArray(this.syncedLyric!!.list.size)
+                liftupStartupTimes = LongArray(this.syncedLyric!!.list.size) { -1 }
             }
             is Creator -> {
                 this.isHolding = true
@@ -75,13 +76,59 @@ class LyricTextView(
     private var animationUnit = -1
     private var animationFraction = 0F
 
+    // This array records per-unit uplift progress.
+    // For default duration, the uplift duration is
+    // 1000 ms, and the duration totally relies on
+    // the relative time we calculated in animate().
+    // Maybe a unit's time is shorter than 1000 ms,
+    // In that case, the liftup progress will still
+    // be calculated so it can be used in drawConte
+    // ntLayerWithProgress.
+    private var liftupProgress: FloatArray? = null
+    private var liftupStartupTimes: LongArray? = null
+    private val progressSoFar: Long
+        get() =
+            (syncedLyric?.relativeTime?.take(animationUnit)?.sum() ?: 0L) +
+            (animationFraction * (syncedLyric?.relativeTime[animationUnit] ?: 0L)).toLong()
+
     fun animate(itemPos: Int, fraction: Float) {
+        animationFraction = fraction
+
         if (itemPos != animationUnit) {
             animationUnit = itemPos
             calculateTargetPosition(animationUnit)
+
+            liftupStartupTimes?.let { starts ->
+                if (itemPos in starts.indices) {
+                    starts[itemPos] = progressSoFar
+                }
+            }
         }
-        animationFraction = fraction
+
+        calculateLiftupProgress()
         invalidate()
+    }
+
+    private fun calculateLiftupProgress() {
+        val starts = liftupStartupTimes ?: return
+        val progresses = liftupProgress ?: return
+
+        val n = minOf(starts.size, progresses.size)
+        val now = progressSoFar
+
+        for (i in 0 until n) {
+            val start = starts[i]
+            if (start < 0L) {
+                continue
+            }
+            val elapsed = now - start
+            val p = when {
+                elapsed <= 0L -> 0f
+                elapsed >= LIFTUP_DURATION -> 1f
+                else -> elapsed.toFloat() / LIFTUP_DURATION.toFloat()
+            }
+            progresses[i] = p
+        }
     }
 
     private fun calculateTargetPosition(itemPos: Int) {
@@ -123,7 +170,6 @@ class LyricTextView(
             lineArray[line - startLine] = (layout.getLineRight(line) - layout.getLineLeft(line)).toInt()
         }
         animationLinePx = LinePixels(lineArray)
-        Log.d("TAG", "line: $animationLinePx")
     }
 
     // Start line of current synced lyrics.
@@ -217,20 +263,19 @@ class LyricTextView(
             val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
             val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
 
-            canvas.save()
-            canvas.clipRect(startX, lineTop, endX, lineBottom)
-            staticLayout?.paint?.apply {
-                blendMode = BlendMode.OVERLAY
-                alpha = (overlayAlpha * 255).toInt()
-            }
-            staticLayout?.draw(canvas)
+            canvas.withClip(startX, lineTop, endX, lineBottom) {
+                staticLayout?.paint?.apply {
+                    blendMode = BlendMode.OVERLAY
+                    alpha = (overlayAlpha * 255).toInt()
+                }
+                staticLayout?.draw(this)
 
-            staticLayout?.paint?.apply {
-                blendMode = null
-                alpha = (shadeAlpha * 255).toInt()
+                staticLayout?.paint?.apply {
+                    blendMode = null
+                    alpha = (shadeAlpha * 255).toInt()
+                }
+                staticLayout?.draw(this)
             }
-            staticLayout?.draw(canvas)
-            canvas.restore()
         }
     }
 
@@ -262,47 +307,95 @@ class LyricTextView(
     }
 
     private fun drawHighlightLayer(canvas: Canvas) {
-        drawHighlightText(canvas)
         // Draw already past line
-        drawTextRange(canvas, 0, startOffsetChar)
+        drawTextRange(canvas, animationUnit - 1)
         // Draw line that's animating
+        drawHighlightText(canvas)
     }
 
-    private var finishedLiftupProgress: FloatArray? = null
-
-    private fun drawTextRange(canvas: Canvas, startOffset: Int, endOffset: Int) {
+    private fun drawTextRange(canvas: Canvas, endUnit: Int) {
         val layout = staticLayout ?: return
+        val synced = syncedLyric ?: return
+        val progress = liftupProgress ?: return
+
+        if (endUnit !in synced.list.indices) return
 
         val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
 
-        staticLayout?.paint?.apply {
+        val lowerOverlayAlpha =
+            if (isHolding)
+                HOLDING_OVERLAY_TRANSPARENCY
+            else
+                INACTIVE_OVERLAY_TRANSPARENCY
+
+        val lowerShadeAlpha =
+            if (isHolding)
+                HOLDING_SHADE_TRANSPARENCY
+            else
+                INACTIVE_SHADE_TRANSPARENCY
+
+        layout.paint.apply {
             blendMode = null
             alpha = (shadeAlpha * 255).toInt()
         }
 
-        val startLine = layout.getLineForOffset(startOffset)
-        val endLine = layout.getLineForOffset(endOffset)
+        var charOffset = 0
 
-        for (line in startLine..endLine) {
-            val lineTop = layout.getLineTop(line).toFloat()
-            val lineBottom = layout.getLineBottom(line).toFloat()
-            val lineLeft = layout.getLineLeft(line)
-            val lineRight = layout.getLineRight(line)
+        for (i in synced.list.indices) {
+            val content = synced.list[i].content
+            val startOffset = charOffset
+            val endOffset = charOffset + content.length
+            charOffset = endOffset
 
-            val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
-            val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
+            // Skip if not in range
+            if (i > endUnit) continue
 
-            canvas.save()
-            canvas.clipRect(startX, lineTop, endX, lineBottom)
-            canvas.translate(0f, -10f)
-            layout.draw(canvas)
-            canvas.restore()
+            val startLine = layout.getLineForOffset(startOffset)
+            val endLine = layout.getLineForOffset(endOffset)
+
+            for (line in startLine..endLine) {
+                val lineTop = layout.getLineTop(line).toFloat()
+                val lineBottom = layout.getLineBottom(line).toFloat()
+                val lineLeft = layout.getLineLeft(line)
+                val lineRight = layout.getLineRight(line)
+
+                val startX = if (line == startLine) layout.getPrimaryHorizontal(startOffset) else lineLeft
+                var endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
+
+                // If endX is 0 because of newline
+                if (endX == 0F && line < endLine) {
+                    endX = lineRight
+                }
+
+                canvas.withClip(startX, lineTop, endX, lineBottom) {
+                    this.translate(0F, -10F * progress[i])
+
+                    staticLayout?.paint?.apply {
+                        blendMode = BlendMode.OVERLAY
+                        alpha = (lowerOverlayAlpha * 255).toInt()
+                    }
+                    staticLayout?.draw(this)
+
+                    staticLayout?.paint?.apply {
+                        blendMode = null
+                        alpha = (lowerShadeAlpha * 255).toInt()
+                    }
+                    staticLayout?.draw(this)
+
+                    layout.paint.apply {
+                        blendMode = null
+                        alpha = (shadeAlpha * 255).toInt()
+                    }
+                    staticLayout?.draw(this)
+                }
+            }
         }
     }
 
     private fun drawHighlightText(canvas: Canvas) {
         val layout = staticLayout ?: return
         val linePx = animationLinePx ?: return
+        val progress = liftupProgress ?: return
 
         val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
 
@@ -322,10 +415,10 @@ class LyricTextView(
             val startX = if (line == startLine) startOffsetInLinePx else lineLeft
             val endX = if (line == activeLine) startX + pixelProgress else lineRight
 
-            canvas.save()
-            canvas.clipRect(startX, lineTop, endX, lineBottom)
-            layout.draw(canvas)
-            canvas.restore()
+            canvas.withClip(startX, lineTop, endX, lineBottom) {
+                canvas.translate(0F, -10F * progress[animationUnit])
+                layout.draw(this)
+            }
         }
     }
 
@@ -395,6 +488,8 @@ class LyricTextView(
 
         const val NORMAL_TEXT_SIZE = 30
         const val BG_TEXT_SIZE = 24
+
+        const val LIFTUP_DURATION = 1000L
     }
 
 }

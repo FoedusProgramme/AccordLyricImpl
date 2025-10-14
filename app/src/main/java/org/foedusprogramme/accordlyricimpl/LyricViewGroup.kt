@@ -48,10 +48,10 @@ class LyricViewGroup @JvmOverloads constructor(
     private val durationMap: LongArray = longArrayOf(
         1500,
         1500,
-        1500,
-        1500,
-        1500,
-        1500,
+        300,
+        300,
+        300,
+        300,
     )
 
     // TEST ONLY REMOVE IN PROD
@@ -60,7 +60,7 @@ class LyricViewGroup @JvmOverloads constructor(
             if (index >= lyrics.list.size) return
 
             ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = durationMap[index]
+                duration = (this@LyricViewGroup.lyrics[0] as SyncedLyric).relativeTime[index]
                 addUpdateListener {
                     targetView.animate(index, animatedValue as Float)
                 }

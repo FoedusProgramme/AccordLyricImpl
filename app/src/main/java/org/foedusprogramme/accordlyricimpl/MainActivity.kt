@@ -53,7 +53,8 @@ class MainActivity : AppCompatActivity() {
                     Lyric("come "),
                     Lyric("to "),
                     Lyric("your "),
-                    Lyric("life"),
+                    Lyric("lifelifelifelifelifelifelifelifelifelife "),
+                    Lyric("your"),
                     /*
                     Lyric("I "),
                     Lyric("don't "),
@@ -65,7 +66,16 @@ class MainActivity : AppCompatActivity() {
                     Lyric("you "),
                     Lyric("shine "),
                      */
-                )),
+                ),
+                    longArrayOf(
+                        500,
+                        1500,
+                        1000,
+                        1200,
+                        1300,
+                        1000,
+                    )
+                ),
                 Lyric("Are you going to Scarborough Fair"),
                 Lyric("Parsley, sage, rosemary and thyme"),
                 Lyric("Remember me to one who lives there"),
