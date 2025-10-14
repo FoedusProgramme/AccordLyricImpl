@@ -235,7 +235,7 @@ class LyricTextView(
     }
 
     private fun drawContentLayerWithProgress(canvas: Canvas) {
-        val startOffset = startOffsetChar
+        val startOffset = endOffsetChar
         val endOffset = lyric.length
         val layout = staticLayout ?: return
 
@@ -399,12 +399,44 @@ class LyricTextView(
 
         val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
 
-        layout.paint.apply {
-            blendMode = null
-            alpha = (shadeAlpha * 255).toInt()
-        }
-
         val (activeLine, pixelProgress) = linePx.getLineAndProgress(animationFraction)
+
+        val lowerOverlayAlpha =
+            if (isHolding)
+                HOLDING_OVERLAY_TRANSPARENCY
+            else
+                INACTIVE_OVERLAY_TRANSPARENCY
+
+        val lowerShadeAlpha =
+            if (isHolding)
+                HOLDING_SHADE_TRANSPARENCY
+            else
+                INACTIVE_SHADE_TRANSPARENCY
+
+        for (line in activeLine..endLine) {
+            val lineTop = layout.getLineTop(line).toFloat()
+            val lineBottom = layout.getLineBottom(line).toFloat()
+            val lineLeft = layout.getLineLeft(line)
+            val lineRight = layout.getLineRight(line)
+
+            val leftDist = if (line == startLine) startOffsetInLinePx else lineLeft
+            val startX = if (line == activeLine) leftDist + pixelProgress else leftDist
+            val endX = if (line == endLine) endOffsetInLinePx else lineRight
+            canvas.withClip(startX, lineTop, endX, lineBottom) {
+                canvas.translate(0F, -10F * progress[animationUnit])
+                staticLayout?.paint?.apply {
+                    blendMode = BlendMode.OVERLAY
+                    alpha = (lowerOverlayAlpha * 255).toInt()
+                }
+                staticLayout?.draw(this)
+
+                staticLayout?.paint?.apply {
+                    blendMode = null
+                    alpha = (lowerShadeAlpha * 255).toInt()
+                }
+                staticLayout?.draw(this)
+            }
+        }
 
         for (line in startLine..activeLine) {
             val lineTop = layout.getLineTop(line).toFloat()
@@ -417,9 +449,14 @@ class LyricTextView(
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
                 canvas.translate(0F, -10F * progress[animationUnit])
+                layout.paint.apply {
+                    blendMode = null
+                    alpha = (shadeAlpha * 255).toInt()
+                }
                 layout.draw(this)
             }
         }
+
     }
 
 
