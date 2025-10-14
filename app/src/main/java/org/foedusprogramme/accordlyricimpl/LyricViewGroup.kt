@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import androidx.core.view.forEach
 import androidx.core.view.forEachIndexed
 import androidx.core.view.postDelayed
@@ -61,6 +62,7 @@ class LyricViewGroup @JvmOverloads constructor(
 
             ValueAnimator.ofFloat(0f, 1f).apply {
                 duration = (this@LyricViewGroup.lyrics[0] as SyncedLyric).relativeTime[index]
+                interpolator = LinearInterpolator()
                 addUpdateListener {
                     targetView.animate(index, animatedValue as Float)
                 }

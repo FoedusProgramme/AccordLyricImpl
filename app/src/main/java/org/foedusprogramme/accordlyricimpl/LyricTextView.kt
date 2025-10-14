@@ -4,10 +4,13 @@ import android.content.Context
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.Log
 import android.view.View
+import android.view.animation.PathInterpolator
 import androidx.core.graphics.withTranslation
 import androidx.core.graphics.withClip
 
@@ -105,6 +108,7 @@ class LyricTextView(
             }
         }
 
+        Log.d("TAG", "progressSoFar: $progressSoFar")
         calculateLiftupProgress()
         invalidate()
     }
@@ -127,7 +131,7 @@ class LyricTextView(
                 elapsed >= LIFTUP_DURATION -> 1f
                 else -> elapsed.toFloat() / LIFTUP_DURATION.toFloat()
             }
-            progresses[i] = p
+            progresses[i] = defaultPathInterpolator.getInterpolation(p)
         }
     }
 
@@ -198,6 +202,8 @@ class LyricTextView(
     // lines
     private var animationLinePx: LinePixels? = null
 
+    private val defaultPathInterpolator = PathInterpolator(0.2F, 0F, 0F, 1F)
+
     inner class LinePixels(
         val lineWidths: IntArray,
     ) {
@@ -266,12 +272,14 @@ class LyricTextView(
             canvas.withClip(startX, lineTop, endX, lineBottom) {
                 staticLayout?.paint?.apply {
                     blendMode = BlendMode.OVERLAY
+                    style = Paint.Style.FILL
                     alpha = (overlayAlpha * 255).toInt()
                 }
                 staticLayout?.draw(this)
 
                 staticLayout?.paint?.apply {
                     blendMode = null
+                    style = Paint.Style.FILL
                     alpha = (shadeAlpha * 255).toInt()
                 }
                 staticLayout?.draw(this)
@@ -295,12 +303,14 @@ class LyricTextView(
         staticLayout.let { if (it == null) return@drawContentLayer }
         staticLayout?.paint?.apply {
             blendMode = BlendMode.OVERLAY
+            style = Paint.Style.FILL
             alpha = (overlayAlpha * 255).toInt()
         }
         staticLayout?.draw(canvas)
 
         staticLayout?.paint?.apply {
             blendMode = null
+            style = Paint.Style.FILL
             alpha = (shadeAlpha * 255).toInt()
         }
         staticLayout?.draw(canvas)
@@ -334,11 +344,6 @@ class LyricTextView(
             else
                 INACTIVE_SHADE_TRANSPARENCY
 
-        layout.paint.apply {
-            blendMode = null
-            alpha = (shadeAlpha * 255).toInt()
-        }
-
         var charOffset = 0
 
         for (i in synced.list.indices) {
@@ -368,22 +373,26 @@ class LyricTextView(
                 }
 
                 canvas.withClip(startX, lineTop, endX, lineBottom) {
-                    this.translate(0F, -10F * progress[i])
+                    this.translate(0F, -LIFTUP_PX * progress[i])
 
                     staticLayout?.paint?.apply {
                         blendMode = BlendMode.OVERLAY
+                        style = Paint.Style.FILL
                         alpha = (lowerOverlayAlpha * 255).toInt()
                     }
                     staticLayout?.draw(this)
 
                     staticLayout?.paint?.apply {
                         blendMode = null
+                        style = Paint.Style.FILL
                         alpha = (lowerShadeAlpha * 255).toInt()
                     }
                     staticLayout?.draw(this)
 
                     layout.paint.apply {
                         blendMode = null
+                        strokeWidth = 0.5F
+                        style = Paint.Style.FILL_AND_STROKE
                         alpha = (shadeAlpha * 255).toInt()
                     }
                     staticLayout?.draw(this)
@@ -423,15 +432,17 @@ class LyricTextView(
             val startX = if (line == activeLine) leftDist + pixelProgress else leftDist
             val endX = if (line == endLine) endOffsetInLinePx else lineRight
             canvas.withClip(startX, lineTop, endX, lineBottom) {
-                canvas.translate(0F, -10F * progress[animationUnit])
+                canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
                 staticLayout?.paint?.apply {
                     blendMode = BlendMode.OVERLAY
+                    style = Paint.Style.FILL
                     alpha = (lowerOverlayAlpha * 255).toInt()
                 }
                 staticLayout?.draw(this)
 
                 staticLayout?.paint?.apply {
                     blendMode = null
+                    style = Paint.Style.FILL
                     alpha = (lowerShadeAlpha * 255).toInt()
                 }
                 staticLayout?.draw(this)
@@ -448,9 +459,11 @@ class LyricTextView(
             val endX = if (line == activeLine) startX + pixelProgress else lineRight
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
-                canvas.translate(0F, -10F * progress[animationUnit])
+                canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
                 layout.paint.apply {
                     blendMode = null
+                    strokeWidth = 0.5F
+                    style = Paint.Style.FILL_AND_STROKE
                     alpha = (shadeAlpha * 255).toInt()
                 }
                 layout.draw(this)
@@ -526,7 +539,8 @@ class LyricTextView(
         const val NORMAL_TEXT_SIZE = 30
         const val BG_TEXT_SIZE = 24
 
-        const val LIFTUP_DURATION = 1000L
+        const val LIFTUP_DURATION = 700L
+        const val LIFTUP_PX = 7
     }
 
 }

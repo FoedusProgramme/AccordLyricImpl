@@ -36,44 +36,28 @@ class MainActivity : AppCompatActivity() {
 
         lyricViewGroup.updateLyrics(
             listOf(
-                SyncedLyric(listOf(
-                    /*
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                    Lyric("TEST "),
-                     */
-                    Lyric("Wel"),
-                    Lyric("come "),
-                    Lyric("to "),
-                    Lyric("your "),
-                    Lyric("lifelifelifelifelifelifelifelifelifelife "),
-                    Lyric("your"),
-                    /*
-                    Lyric("I "),
-                    Lyric("don't "),
-                    Lyric("need "),
-                    Lyric("no "),
-                    Lyric("light "),
-                    Lyric("to "),
-                    Lyric("see "),
-                    Lyric("you "),
-                    Lyric("shine "),
-                     */
-                ),
+                SyncedLyric(
+                    listOf(
+                        Lyric("啊 "),
+                        Lyric("偏执"),
+                        Lyric("是那"),
+                        Lyric("玛格丽特 "),
+                        Lyric("被我"),
+                        Lyric("变出"),
+                        Lyric("的"),
+                        Lyric("苹"),
+                        Lyric("果"),
+                    ),
                     longArrayOf(
-                        500,
-                        1500,
-                        1000,
-                        1200,
-                        1300,
-                        1000,
+                        300,   // “啊 ”
+                        300,   // “偏执”
+                        400,   // “是那”
+                        500,   // “玛格丽特 ”
+                        400,   // “被我”
+                        200,   // “变出”
+                        100,   // “的”
+                        300,   // “苹”
+                        200,   // “果”
                     )
                 ),
                 Lyric("Are you going to Scarborough Fair"),
