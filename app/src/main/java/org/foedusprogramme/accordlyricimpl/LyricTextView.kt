@@ -273,14 +273,14 @@ class LyricTextView(
                 staticLayout?.paint?.apply {
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
-                    alpha = (overlayAlpha * 255).toInt()
+                    alpha = getScopeAlpha(overlayAlpha)
                 }
                 staticLayout?.draw(this)
 
                 staticLayout?.paint?.apply {
                     blendMode = null
                     style = Paint.Style.FILL
-                    alpha = (shadeAlpha * 255).toInt()
+                    alpha = getScopeAlpha(shadeAlpha)
                 }
                 staticLayout?.draw(this)
             }
@@ -304,14 +304,14 @@ class LyricTextView(
         staticLayout?.paint?.apply {
             blendMode = BlendMode.OVERLAY
             style = Paint.Style.FILL
-            alpha = (overlayAlpha * 255).toInt()
+            alpha = getScopeAlpha(overlayAlpha)
         }
         staticLayout?.draw(canvas)
 
         staticLayout?.paint?.apply {
             blendMode = null
             style = Paint.Style.FILL
-            alpha = (shadeAlpha * 255).toInt()
+            alpha = getScopeAlpha(shadeAlpha)
         }
         staticLayout?.draw(canvas)
     }
@@ -378,14 +378,14 @@ class LyricTextView(
                     staticLayout?.paint?.apply {
                         blendMode = BlendMode.OVERLAY
                         style = Paint.Style.FILL
-                        alpha = (lowerOverlayAlpha * 255).toInt()
+                        alpha = getScopeAlpha(lowerOverlayAlpha)
                     }
                     staticLayout?.draw(this)
 
                     staticLayout?.paint?.apply {
                         blendMode = null
                         style = Paint.Style.FILL
-                        alpha = (lowerShadeAlpha * 255).toInt()
+                        alpha = getScopeAlpha(lowerShadeAlpha)
                     }
                     staticLayout?.draw(this)
 
@@ -393,7 +393,7 @@ class LyricTextView(
                         blendMode = null
                         strokeWidth = 0.5F
                         style = Paint.Style.FILL_AND_STROKE
-                        alpha = (shadeAlpha * 255).toInt()
+                        alpha = getScopeAlpha(shadeAlpha)
                     }
                     staticLayout?.draw(this)
                 }
@@ -436,14 +436,14 @@ class LyricTextView(
                 staticLayout?.paint?.apply {
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
-                    alpha = (lowerOverlayAlpha * 255).toInt()
+                    alpha = getScopeAlpha(lowerOverlayAlpha)
                 }
                 staticLayout?.draw(this)
 
                 staticLayout?.paint?.apply {
                     blendMode = null
                     style = Paint.Style.FILL
-                    alpha = (lowerShadeAlpha * 255).toInt()
+                    alpha = getScopeAlpha(lowerShadeAlpha)
                 }
                 staticLayout?.draw(this)
             }
@@ -464,7 +464,7 @@ class LyricTextView(
                     blendMode = null
                     strokeWidth = 0.5F
                     style = Paint.Style.FILL_AND_STROKE
-                    alpha = (shadeAlpha * 255).toInt()
+                    alpha = getScopeAlpha(shadeAlpha)
                 }
                 layout.draw(this)
             }
@@ -472,6 +472,14 @@ class LyricTextView(
 
     }
 
+    private var alpha = 1F
+
+    override fun setAlpha(alpha: Float) {
+        this.alpha = alpha
+        invalidate()
+    }
+
+    override fun getAlpha(): Float = alpha
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val widthMode = MeasureSpec.getMode(widthMeasureSpec)
@@ -525,6 +533,9 @@ class LyricTextView(
             typeface = resources.getFont(R.font.inter_semibold)
         }
     }
+
+    private fun getScopeAlpha(currentAlpha: Float): Int =
+        (currentAlpha * 255 * this.alpha).toInt()
 
     companion object {
         const val ACTIVE_SHADE_TRANSPARENCY = .85F

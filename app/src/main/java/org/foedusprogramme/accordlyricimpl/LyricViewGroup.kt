@@ -99,6 +99,7 @@ class LyricViewGroup @JvmOverloads constructor(
         removeAllViews()
         lyrics.forEachIndexed { index, line ->
             val view = LyricTextView(context, line)
+            view.alpha = alpha
             addView(view)
         }
 
@@ -147,6 +148,20 @@ class LyricViewGroup @JvmOverloads constructor(
 
         setMeasuredDimension(width, height)
     }
+
+    private var alpha = 1f
+
+    override fun setAlpha(alpha: Float) {
+        this.alpha = alpha
+
+        forEach { child: View ->
+            child.alpha = alpha
+        }
+
+        invalidate()
+    }
+
+    override fun getAlpha(): Float = alpha
 
     companion object {
         const val ITEM_SPACING = 16
