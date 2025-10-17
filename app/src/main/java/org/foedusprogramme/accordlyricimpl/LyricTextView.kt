@@ -11,8 +11,8 @@ import android.text.TextPaint
 import android.util.Log
 import android.view.View
 import android.view.animation.PathInterpolator
-import androidx.core.graphics.withTranslation
 import androidx.core.graphics.withClip
+import androidx.core.graphics.withTranslation
 
 class LyricTextView(
     context: Context,
@@ -23,8 +23,8 @@ class LyricTextView(
             is Lyric -> { this.lyric = lyric.content }
             is SyncedLyric -> {
                 this.syncedLyric = lyric
-                liftupProgress = FloatArray(this.syncedLyric!!.list.size)
-                liftupStartupTimes = LongArray(this.syncedLyric!!.list.size) { -1 }
+                liftupProgress = FloatArray(lyric.list.size)
+                liftupStartupTimes = LongArray(lyric.list.size) { -1 }
             }
             is Creator -> {
                 this.isHolding = true
@@ -270,24 +270,26 @@ class LyricTextView(
             val endX = if (line == endLine) layout.getPrimaryHorizontal(endOffset) else lineRight
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
-                staticLayout?.paint?.apply {
+                layout.paint.apply {
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(overlayAlpha)
                 }
-                staticLayout?.draw(this)
+                layout.draw(this)
 
-                staticLayout?.paint?.apply {
+                layout.paint.apply {
                     blendMode = null
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(shadeAlpha)
                 }
-                staticLayout?.draw(this)
+                layout.draw(this)
             }
         }
     }
 
     private fun drawContentLayer(canvas: Canvas) {
+        val layout = staticLayout ?: return
+
         val overlayAlpha =
             if (isHolding)
                 HOLDING_OVERLAY_TRANSPARENCY
@@ -300,20 +302,19 @@ class LyricTextView(
             else
                 INACTIVE_SHADE_TRANSPARENCY
 
-        staticLayout.let { if (it == null) return@drawContentLayer }
-        staticLayout?.paint?.apply {
+        layout.paint.apply {
             blendMode = BlendMode.OVERLAY
             style = Paint.Style.FILL
             alpha = getScopeAlpha(overlayAlpha)
         }
-        staticLayout?.draw(canvas)
+        layout.draw(canvas)
 
-        staticLayout?.paint?.apply {
+        layout.paint.apply {
             blendMode = null
             style = Paint.Style.FILL
             alpha = getScopeAlpha(shadeAlpha)
         }
-        staticLayout?.draw(canvas)
+        layout.draw(canvas)
     }
 
     private fun drawHighlightLayer(canvas: Canvas) {
@@ -375,19 +376,19 @@ class LyricTextView(
                 canvas.withClip(startX, lineTop, endX, lineBottom) {
                     this.translate(0F, -LIFTUP_PX * progress[i])
 
-                    staticLayout?.paint?.apply {
+                    layout.paint.apply {
                         blendMode = BlendMode.OVERLAY
                         style = Paint.Style.FILL
                         alpha = getScopeAlpha(lowerOverlayAlpha)
                     }
-                    staticLayout?.draw(this)
+                    layout.draw(this)
 
-                    staticLayout?.paint?.apply {
+                    layout.paint.apply {
                         blendMode = null
                         style = Paint.Style.FILL
                         alpha = getScopeAlpha(lowerShadeAlpha)
                     }
-                    staticLayout?.draw(this)
+                    layout.draw(this)
 
                     layout.paint.apply {
                         blendMode = null
@@ -395,7 +396,7 @@ class LyricTextView(
                         style = Paint.Style.FILL_AND_STROKE
                         alpha = getScopeAlpha(shadeAlpha)
                     }
-                    staticLayout?.draw(this)
+                    layout.draw(this)
                 }
             }
         }
@@ -433,19 +434,20 @@ class LyricTextView(
             val endX = if (line == endLine) endOffsetInLinePx else lineRight
             canvas.withClip(startX, lineTop, endX, lineBottom) {
                 canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
-                staticLayout?.paint?.apply {
+
+                layout.paint.apply {
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(lowerOverlayAlpha)
                 }
-                staticLayout?.draw(this)
+                layout.draw(this)
 
-                staticLayout?.paint?.apply {
+                layout.paint.apply {
                     blendMode = null
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(lowerShadeAlpha)
                 }
-                staticLayout?.draw(this)
+                layout.draw(this)
             }
         }
 
@@ -460,6 +462,21 @@ class LyricTextView(
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
                 canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
+
+                layout.paint.apply {
+                    blendMode = BlendMode.OVERLAY
+                    style = Paint.Style.FILL
+                    alpha = getScopeAlpha(lowerOverlayAlpha)
+                }
+                layout.draw(this)
+
+                layout.paint.apply {
+                    blendMode = null
+                    style = Paint.Style.FILL
+                    alpha = getScopeAlpha(lowerShadeAlpha)
+                }
+                layout.draw(this)
+
                 layout.paint.apply {
                     blendMode = null
                     strokeWidth = 0.5F
@@ -469,7 +486,6 @@ class LyricTextView(
                 layout.draw(this)
             }
         }
-
     }
 
     private var alpha = 1F
@@ -553,5 +569,4 @@ class LyricTextView(
         const val LIFTUP_DURATION = 700L
         const val LIFTUP_PX = 7
     }
-
 }
