@@ -461,12 +461,19 @@ class LyricTextView(
             val endX = if (line == activeLine) startX + pixelProgress else lineRight
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
-                canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
+                val progress = progress[animationUnit]
+                canvas.translate(0F, -LIFTUP_PX * progress)
 
                 layout.paint.apply {
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(lowerOverlayAlpha)
+                    setShadowLayer(
+                        GLOW_EFFECT_RADIUS * triangle(progress),
+                        0F,
+                        0F,
+                        Color.WHITE.applyAlpha(alpha)
+                    )
                 }
                 layout.draw(this)
 
@@ -474,6 +481,12 @@ class LyricTextView(
                     blendMode = null
                     style = Paint.Style.FILL
                     alpha = getScopeAlpha(lowerShadeAlpha)
+                    setShadowLayer(
+                        GLOW_EFFECT_RADIUS * triangle(progress),
+                        0F,
+                        0F,
+                        Color.WHITE.applyAlpha(alpha)
+                    )
                 }
                 layout.draw(this)
 
@@ -484,6 +497,12 @@ class LyricTextView(
                     alpha = getScopeAlpha(shadeAlpha)
                 }
                 layout.draw(this)
+                layout.paint.setShadowLayer(
+                    0F,
+                    0F,
+                    0F,
+                    Color.TRANSPARENT
+                )
             }
         }
     }
@@ -568,5 +587,7 @@ class LyricTextView(
 
         const val LIFTUP_DURATION = 700L
         const val LIFTUP_PX = 7
+
+        const val GLOW_EFFECT_RADIUS = 7F
     }
 }
