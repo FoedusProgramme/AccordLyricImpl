@@ -1,18 +1,23 @@
 package org.foedusprogramme.accordlyricimpl
 
+import android.animation.ValueAnimator
+import android.animation.Animator
 import android.content.Context
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
-import android.util.Log
 import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.view.animation.PathInterpolator
 import androidx.core.graphics.withClip
 import androidx.core.graphics.withTranslation
+import kotlin.math.abs
 
 class LyricTextView(
     context: Context,
@@ -23,8 +28,14 @@ class LyricTextView(
             is Lyric -> { this.lyric = lyric.content }
             is SyncedLyric -> {
                 this.syncedLyric = lyric
+                liftupWindows = LyricTiming.liftupWindows(
+                    relativeTime = lyric.relativeTime,
+                    unitCount = lyric.list.size
+                )
                 liftupProgress = FloatArray(lyric.list.size)
-                liftupStartupTimes = LongArray(lyric.list.size) { -1 }
+                liftupStartupTimes = LongArray(lyric.list.size) { index ->
+                    liftupWindows[index].startMs
+                }
             }
             is Creator -> {
                 this.isHolding = true
@@ -61,56 +72,247 @@ class LyricTextView(
 
     var staticLayout: StaticLayout? = null
     var isHolding: Boolean = false
+    private var isLineActive: Boolean = false
+    private var lineTextAlpha = INACTIVE_LINE_ALPHA
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    private var lineTextScale = INACTIVE_LINE_SCALE
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+    private var lineBlurRadius = 0f
+        set(value) {
+            if (field == value) return
+            field = value
+            setRenderEffect(
+                if (value <= 0f) {
+                    null
+                } else {
+                    RenderEffect.createBlurEffect(value, value, Shader.TileMode.DECAL)
+                }
+            )
+        }
+    private var lineTextAlphaAnimator: ValueAnimator? = null
+    private var lineTextScaleAnimator: ValueAnimator? = null
+    private var lineBlurRadiusAnimator: ValueAnimator? = null
+    private val lineStyleInterpolator = DecelerateInterpolator()
 
     override fun onDraw(canvas: Canvas) {
+        val count = canvas.save()
+        canvas.scale(
+            lineTextScale,
+            lineTextScale,
+            horizontalMargin.toFloat(),
+            height / 2f
+        )
         canvas.withTranslation(
             horizontalMargin.toFloat(),
             verticalMargin.toFloat()
         ) {
-            if (syncedLyric != null) {
+            if (syncedLyric != null && animationUnit >= 0 && endOffsetChar >= 0) {
                 drawContentLayerWithProgress(canvas)
                 drawHighlightLayer(canvas)
             } else {
                 drawContentLayer(canvas)
             }
         }
+        canvas.restoreToCount(count)
     }
 
     private var animationUnit = -1
     private var animationFraction = 0F
 
-    // This array records per-unit uplift progress.
-    // For default duration, the uplift duration is
-    // 1000 ms, and the duration totally relies on
-    // the relative time we calculated in animate().
-    // Maybe a unit's time is shorter than 1000 ms,
-    // In that case, the liftup progress will still
-    // be calculated so it can be used in drawConte
-    // ntLayerWithProgress.
+    // These arrays record each unit's lift timing and progress.
+    // Short units can borrow time from nearby units so the lift moves
+    // as a softer wave instead of snapping to the unit's own duration.
+    private var liftupWindows: List<LyricTiming.LiftupWindow> = emptyList()
     private var liftupProgress: FloatArray? = null
     private var liftupStartupTimes: LongArray? = null
+    private var liftupReturnAnimator: ValueAnimator? = null
+    private val liftupReturnInterpolator = PathInterpolator(0.6F, 0F, 0.2F, 1F)
+    private var animationPositionMs = 0L
     private val progressSoFar: Long
-        get() =
-            (syncedLyric?.relativeTime?.take(animationUnit)?.sum() ?: 0L) +
-            (animationFraction * (syncedLyric?.relativeTime[animationUnit] ?: 0L)).toLong()
+        get() = animationPositionMs
 
-    fun animate(itemPos: Int, fraction: Float) {
+    fun animate(
+        itemPos: Int,
+        fraction: Float,
+        linePositionMs: Long = calculateLinePositionMs(itemPos, fraction)
+    ) {
+        cancelLiftupReturnAnimator()
         animationFraction = fraction
+        animationPositionMs = linePositionMs.coerceAtLeast(0L)
 
         if (itemPos != animationUnit) {
             animationUnit = itemPos
             calculateTargetPosition(animationUnit)
-
-            liftupStartupTimes?.let { starts ->
-                if (itemPos in starts.indices) {
-                    starts[itemPos] = progressSoFar
-                }
-            }
         }
 
-        Log.d("TAG", "progressSoFar: $progressSoFar")
         calculateLiftupProgress()
         invalidate()
+    }
+
+    fun resetPlayback() {
+        resetPlayback(cancelReturnAnimator = true)
+    }
+
+    private fun resetPlayback(cancelReturnAnimator: Boolean) {
+        if (cancelReturnAnimator) {
+            cancelLiftupReturnAnimator()
+        }
+        animationUnit = -1
+        animationFraction = 0f
+        animationPositionMs = 0L
+        startLine = -1
+        endLine = -1
+        startOffsetInLinePx = -1f
+        endOffsetInLinePx = -1f
+        startOffsetChar = -1
+        endOffsetChar = -1
+        animationLinePx = null
+        liftupProgress?.fill(0f)
+        invalidate()
+    }
+
+    fun animateLiftupProgressToRest(durationMs: Long, delayMs: Long) {
+        val progress = liftupProgress
+        if (progress == null || animationUnit < 0 || progress.all { it == 0f }) {
+            resetPlayback()
+            return
+        }
+
+        val startProgress = progress.copyOf()
+        var wasCancelled = false
+
+        cancelLiftupReturnAnimator()
+        liftupReturnAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = durationMs
+            startDelay = delayMs
+            interpolator = liftupReturnInterpolator
+            addUpdateListener {
+                val fraction = it.animatedValue as Float
+                progress.indices.forEach { index ->
+                    progress[index] = startProgress[index] * (1f - fraction)
+                }
+                invalidate()
+            }
+            addListener(object : Animator.AnimatorListener {
+                override fun onAnimationStart(animation: Animator) = Unit
+
+                override fun onAnimationEnd(animation: Animator) {
+                    if (!wasCancelled) {
+                        liftupReturnAnimator = null
+                        resetPlayback(cancelReturnAnimator = false)
+                    }
+                }
+
+                override fun onAnimationCancel(animation: Animator) {
+                    wasCancelled = true
+                }
+
+                override fun onAnimationRepeat(animation: Animator) = Unit
+            })
+            start()
+        }
+    }
+
+    fun setLineActive(active: Boolean) {
+        if (isLineActive == active) return
+        isLineActive = active
+        invalidate()
+    }
+
+    fun updateDelayedLineStyle(
+        index: Int,
+        targetIndex: Int,
+        animated: Boolean,
+        delayMs: Long
+    ) {
+        val isActivated = index == targetIndex
+        val targetAlpha = if (isActivated) ACTIVE_LINE_ALPHA else INACTIVE_LINE_ALPHA
+        val targetScale = if (isActivated) ACTIVE_LINE_SCALE else INACTIVE_LINE_SCALE
+        val targetBlurRadius = (abs(index - targetIndex) * BLUR_RADIUS_STEP.dp.px)
+            .coerceAtMost(MAX_BLUR_RADIUS.dp.px)
+
+        if (!animated) {
+            cancelLineStyleAnimations()
+            lineTextAlpha = targetAlpha
+            lineTextScale = targetScale
+            lineBlurRadius = targetBlurRadius
+            return
+        }
+
+        val secondaryDelayMs = delayMs + STYLE_SECONDARY_DELAY_MS
+        animateLineTextAlpha(targetAlpha, secondaryDelayMs)
+        animateLineTextScale(targetScale, secondaryDelayMs)
+        animateLineBlurRadius(targetBlurRadius, secondaryDelayMs)
+    }
+
+    fun resetLineStyle() {
+        cancelLineStyleAnimations()
+        lineTextAlpha = INACTIVE_LINE_ALPHA
+        lineTextScale = INACTIVE_LINE_SCALE
+        lineBlurRadius = 0f
+    }
+
+    private fun animateLineTextAlpha(targetAlpha: Float, delayMs: Long) {
+        if (lineTextAlpha == targetAlpha) return
+        lineTextAlphaAnimator?.cancel()
+        lineTextAlphaAnimator = ValueAnimator.ofFloat(lineTextAlpha, targetAlpha).apply {
+            duration = STYLE_ANIMATION_DURATION_MS
+            startDelay = delayMs
+            interpolator = lineStyleInterpolator
+            addUpdateListener {
+                lineTextAlpha = it.animatedValue as Float
+            }
+            start()
+        }
+    }
+
+    private fun animateLineTextScale(targetScale: Float, delayMs: Long) {
+        if (lineTextScale == targetScale) return
+        lineTextScaleAnimator?.cancel()
+        lineTextScaleAnimator = ValueAnimator.ofFloat(lineTextScale, targetScale).apply {
+            duration = STYLE_ANIMATION_DURATION_MS
+            startDelay = delayMs
+            interpolator = lineStyleInterpolator
+            addUpdateListener {
+                lineTextScale = it.animatedValue as Float
+            }
+            start()
+        }
+    }
+
+    private fun animateLineBlurRadius(targetRadius: Float, delayMs: Long) {
+        if (lineBlurRadius == targetRadius) return
+        lineBlurRadiusAnimator?.cancel()
+        lineBlurRadiusAnimator = ValueAnimator.ofFloat(lineBlurRadius, targetRadius).apply {
+            duration = BLUR_ANIMATION_DURATION_MS
+            startDelay = delayMs
+            addUpdateListener {
+                lineBlurRadius = it.animatedValue as Float
+            }
+            start()
+        }
+    }
+
+    private fun cancelLineStyleAnimations() {
+        lineTextAlphaAnimator?.cancel()
+        lineTextScaleAnimator?.cancel()
+        lineBlurRadiusAnimator?.cancel()
+        lineTextAlphaAnimator = null
+        lineTextScaleAnimator = null
+        lineBlurRadiusAnimator = null
+    }
+
+    private fun cancelLiftupReturnAnimator() {
+        liftupReturnAnimator?.cancel()
+        liftupReturnAnimator = null
     }
 
     private fun calculateLiftupProgress() {
@@ -126,13 +328,22 @@ class LyricTextView(
                 continue
             }
             val elapsed = now - start
+            val duration = liftupWindows
+                .getOrNull(i)
+                ?.durationMs
+                ?: LyricTiming.LIFTUP_DURATION_MS
             val p = when {
                 elapsed <= 0L -> 0f
-                elapsed >= LIFTUP_DURATION -> 1f
-                else -> elapsed.toFloat() / LIFTUP_DURATION.toFloat()
+                elapsed >= duration -> 1f
+                else -> elapsed.toFloat() / duration.toFloat()
             }
             progresses[i] = defaultPathInterpolator.getInterpolation(p)
         }
+    }
+
+    private fun calculateLinePositionMs(itemPos: Int, fraction: Float): Long {
+        val synced = syncedLyric ?: return 0L
+        return LyricTiming.linePositionMs(synced.relativeTime, itemPos, fraction)
     }
 
     private fun calculateTargetPosition(itemPos: Int) {
@@ -245,17 +456,18 @@ class LyricTextView(
         val endOffset = lyric.length
         val layout = staticLayout ?: return
 
-        val overlayAlpha =
-            if (isHolding)
-                HOLDING_OVERLAY_TRANSPARENCY
-            else
-                INACTIVE_OVERLAY_TRANSPARENCY
+        val activeWholeLine = isLineActive && syncedLyric == null
+        val overlayAlpha = when {
+            activeWholeLine -> ACTIVE_OVERLAY_TRANSPARENCY
+            isHolding -> HOLDING_OVERLAY_TRANSPARENCY
+            else -> INACTIVE_OVERLAY_TRANSPARENCY
+        }
 
-        val shadeAlpha =
-            if (isHolding)
-                HOLDING_SHADE_TRANSPARENCY
-            else
-                INACTIVE_SHADE_TRANSPARENCY
+        val shadeAlpha = when {
+            activeWholeLine -> ACTIVE_SHADE_TRANSPARENCY
+            isHolding -> HOLDING_SHADE_TRANSPARENCY
+            else -> INACTIVE_SHADE_TRANSPARENCY
+        }
 
         val startLine = layout.getLineForOffset(startOffset)
         val endLine = layout.getLineForOffset(endOffset)
@@ -331,20 +543,6 @@ class LyricTextView(
 
         if (endUnit !in synced.list.indices) return
 
-        val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
-
-        val lowerOverlayAlpha =
-            if (isHolding)
-                HOLDING_OVERLAY_TRANSPARENCY
-            else
-                INACTIVE_OVERLAY_TRANSPARENCY
-
-        val lowerShadeAlpha =
-            if (isHolding)
-                HOLDING_SHADE_TRANSPARENCY
-            else
-                INACTIVE_SHADE_TRANSPARENCY
-
         var charOffset = 0
 
         for (i in synced.list.indices) {
@@ -374,29 +572,11 @@ class LyricTextView(
                 }
 
                 canvas.withClip(startX, lineTop, endX, lineBottom) {
-                    this.translate(0F, -LIFTUP_PX * progress[i])
-
-                    layout.paint.apply {
-                        blendMode = BlendMode.OVERLAY
-                        style = Paint.Style.FILL
-                        alpha = getScopeAlpha(lowerOverlayAlpha)
-                    }
-                    layout.draw(this)
-
-                    layout.paint.apply {
-                        blendMode = null
-                        style = Paint.Style.FILL
-                        alpha = getScopeAlpha(lowerShadeAlpha)
-                    }
-                    layout.draw(this)
-
-                    layout.paint.apply {
-                        blendMode = null
-                        strokeWidth = 0.5F
-                        style = Paint.Style.FILL_AND_STROKE
-                        alpha = getScopeAlpha(shadeAlpha)
-                    }
-                    layout.draw(this)
+                    drawLiftedHighlightText(
+                        layout = layout,
+                        liftProgress = progress[i],
+                        glowEnabled = false
+                    )
                 }
             }
         }
@@ -407,21 +587,7 @@ class LyricTextView(
         val linePx = animationLinePx ?: return
         val progress = liftupProgress ?: return
 
-        val shadeAlpha = ACTIVE_SHADE_TRANSPARENCY
-
         val (activeLine, pixelProgress) = linePx.getLineAndProgress(animationFraction)
-
-        val lowerOverlayAlpha =
-            if (isHolding)
-                HOLDING_OVERLAY_TRANSPARENCY
-            else
-                INACTIVE_OVERLAY_TRANSPARENCY
-
-        val lowerShadeAlpha =
-            if (isHolding)
-                HOLDING_SHADE_TRANSPARENCY
-            else
-                INACTIVE_SHADE_TRANSPARENCY
 
         for (line in activeLine..endLine) {
             val lineTop = layout.getLineTop(line).toFloat()
@@ -436,16 +602,18 @@ class LyricTextView(
                 canvas.translate(0F, -LIFTUP_PX * progress[animationUnit])
 
                 layout.paint.apply {
+                    clearGlowShadow()
                     blendMode = BlendMode.OVERLAY
                     style = Paint.Style.FILL
-                    alpha = getScopeAlpha(lowerOverlayAlpha)
+                    alpha = getScopeAlpha(inactiveOverlayAlpha())
                 }
                 layout.draw(this)
 
                 layout.paint.apply {
+                    clearGlowShadow()
                     blendMode = null
                     style = Paint.Style.FILL
-                    alpha = getScopeAlpha(lowerShadeAlpha)
+                    alpha = getScopeAlpha(inactiveShadeAlpha())
                 }
                 layout.draw(this)
             }
@@ -462,49 +630,94 @@ class LyricTextView(
 
             canvas.withClip(startX, lineTop, endX, lineBottom) {
                 val progress = progress[animationUnit]
-                canvas.translate(0F, -LIFTUP_PX * progress)
-
-                layout.paint.apply {
-                    blendMode = BlendMode.OVERLAY
-                    style = Paint.Style.FILL
-                    alpha = getScopeAlpha(lowerOverlayAlpha)
-                    setShadowLayer(
-                        GLOW_EFFECT_RADIUS * triangle(progress),
-                        0F,
-                        0F,
-                        Color.WHITE.applyAlpha(alpha)
-                    )
-                }
-                layout.draw(this)
-
-                layout.paint.apply {
-                    blendMode = null
-                    style = Paint.Style.FILL
-                    alpha = getScopeAlpha(lowerShadeAlpha)
-                    setShadowLayer(
-                        GLOW_EFFECT_RADIUS * triangle(progress),
-                        0F,
-                        0F,
-                        Color.WHITE.applyAlpha(alpha)
-                    )
-                }
-                layout.draw(this)
-
-                layout.paint.apply {
-                    blendMode = null
-                    strokeWidth = 0.5F
-                    style = Paint.Style.FILL_AND_STROKE
-                    alpha = getScopeAlpha(shadeAlpha)
-                }
-                layout.draw(this)
-                layout.paint.setShadowLayer(
-                    0F,
-                    0F,
-                    0F,
-                    Color.TRANSPARENT
+                drawLiftedHighlightText(
+                    layout = layout,
+                    liftProgress = progress,
+                    glowEnabled = shouldShowActiveGlow(animationUnit)
                 )
             }
         }
+    }
+
+    private fun Canvas.drawLiftedHighlightText(
+        layout: StaticLayout,
+        liftProgress: Float,
+        glowEnabled: Boolean
+    ) {
+        translate(0F, -LIFTUP_PX * liftProgress)
+
+        layout.paint.apply {
+            clearGlowShadow()
+            blendMode = BlendMode.OVERLAY
+            style = Paint.Style.FILL
+            alpha = getScopeAlpha(inactiveOverlayAlpha())
+        }
+        layout.draw(this)
+
+        layout.paint.apply {
+            clearGlowShadow()
+            blendMode = null
+            style = Paint.Style.FILL
+            alpha = getScopeAlpha(inactiveShadeAlpha())
+        }
+        layout.draw(this)
+
+        layout.paint.apply {
+            blendMode = null
+            strokeWidth = 0.5F
+            style = Paint.Style.FILL_AND_STROKE
+            alpha = getScopeAlpha(ACTIVE_SHADE_TRANSPARENCY)
+            setGlowShadow(liftProgress, glowEnabled)
+        }
+        layout.draw(this)
+        layout.paint.clearGlowShadow()
+    }
+
+    private fun inactiveOverlayAlpha(): Float =
+        if (isHolding) {
+            HOLDING_OVERLAY_TRANSPARENCY
+        } else {
+            INACTIVE_OVERLAY_TRANSPARENCY
+        }
+
+    private fun inactiveShadeAlpha(): Float =
+        if (isHolding) {
+            HOLDING_SHADE_TRANSPARENCY
+        } else {
+            INACTIVE_SHADE_TRANSPARENCY
+        }
+
+    private fun shouldShowActiveGlow(itemPos: Int): Boolean {
+        val synced = syncedLyric ?: return false
+        return LyricTiming.shouldShowActiveGlow(synced.relativeTime, itemPos)
+    }
+
+    private fun TextPaint.setGlowShadow(liftProgress: Float, enabled: Boolean) {
+        val radius = if (enabled) {
+            GLOW_EFFECT_RADIUS * triangle(liftProgress)
+        } else {
+            0F
+        }
+
+        if (radius > 0F) {
+            setShadowLayer(
+                radius,
+                0F,
+                0F,
+                Color.WHITE.applyAlpha(alpha)
+            )
+        } else {
+            clearGlowShadow()
+        }
+    }
+
+    private fun TextPaint.clearGlowShadow() {
+        setShadowLayer(
+            0F,
+            0F,
+            0F,
+            Color.TRANSPARENT
+        )
     }
 
     private var alpha = 1F
@@ -545,7 +758,10 @@ class LyricTextView(
     }
 
     fun release() {
-
+        animate().cancel()
+        cancelLineStyleAnimations()
+        cancelLiftupReturnAnimator()
+        setRenderEffect(null)
     }
 
     private fun measureStaticLayout(value: String, measuredWidth: Int) {
@@ -570,7 +786,7 @@ class LyricTextView(
     }
 
     private fun getScopeAlpha(currentAlpha: Float): Int =
-        (currentAlpha * 255 * this.alpha).toInt()
+        (currentAlpha * 255 * this.alpha * lineTextAlpha).toInt()
 
     companion object {
         const val ACTIVE_SHADE_TRANSPARENCY = .85F
@@ -585,9 +801,19 @@ class LyricTextView(
         const val NORMAL_TEXT_SIZE = 30
         const val BG_TEXT_SIZE = 24
 
-        const val LIFTUP_DURATION = 700L
-        const val LIFTUP_PX = 7
+        const val LIFTUP_DURATION = LyricTiming.LIFTUP_DURATION_MS
+        const val LIFTUP_PX = 6
 
         const val GLOW_EFFECT_RADIUS = 7F
+
+        private const val ACTIVE_LINE_ALPHA = .9F
+        private const val INACTIVE_LINE_ALPHA = .2F
+        private const val ACTIVE_LINE_SCALE = 1F
+        private const val INACTIVE_LINE_SCALE = .96F
+        private const val MAX_BLUR_RADIUS = 8
+        private const val BLUR_RADIUS_STEP = 2
+        private const val STYLE_ANIMATION_DURATION_MS = 500L
+        private const val BLUR_ANIMATION_DURATION_MS = 100L
+        private const val STYLE_SECONDARY_DELAY_MS = 250L
     }
 }

@@ -1,115 +1,189 @@
 package org.foedusprogramme.accordlyricimpl
 
-import android.animation.ValueAnimator
 import android.content.Context
 import android.util.AttributeSet
-import android.util.Log
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.LinearInterpolator
+import android.view.animation.PathInterpolator
+import android.widget.ScrollView
 import androidx.core.view.forEach
 import androidx.core.view.forEachIndexed
-import androidx.core.view.postDelayed
 
 class LyricViewGroup @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : ViewGroup(context, attrs) {
 
-    init {
-        postDelayed(1000) {
-            val targetView = getChildAt(0) as LyricTextView
-            val synced = lyrics[0] as SyncedLyric
-            playLyricsSequentially(targetView, synced)
-        }
-    }
-
-    /*
-    *
-    *                 <span begin="01:30.120" end="01:30.930">I </span>
-                <span begin="01:30.930" end="01:31.350">don't </span>
-                <span begin="01:31.350" end="01:31.620">need </span>
-                <span begin="01:31.620" end="01:31.890">no </span>
-                <span begin="01:31.890" end="01:32.790">light </span>
-                <span begin="01:32.820" end="01:33.690">to </span>
-                <span begin="01:33.690" end="01:34.800">see </span>
-                <span begin="01:34.800" end="01:35.850">you </span>
-                <span ttm:role="x-bg">
-                    <span begin="01:31.890" end="01:32.790">light </span>
-                    <span begin="01:32.820" end="01:33.690">to </span>
-                    <span begin="01:33.690" end="01:34.800">see </span>
-                    <span begin="01:34.800" end="01:35.850">you </span>
-                </span>
-            </p>
-            <p begin="01:36.480" end="01:39.630" ttm:agent="v1" itunes:key="L34">
-                <span begin="01:36.480" end="01:39.630">Shine </span>
-    *
-    * */
-
-    private val durationMap: LongArray = longArrayOf(
-        1500,
-        1500,
-        300,
-        300,
-        300,
-        300,
-    )
-
-    // TEST ONLY REMOVE IN PROD
-    fun playLyricsSequentially(targetView: LyricTextView, lyrics: SyncedLyric) {
-        fun playNext(index: Int) {
-            if (index >= lyrics.list.size) return
-
-            ValueAnimator.ofFloat(0f, 1f).apply {
-                duration = (this@LyricViewGroup.lyrics[0] as SyncedLyric).relativeTime[index]
-                interpolator = LinearInterpolator()
-                addUpdateListener {
-                    targetView.animate(index, animatedValue as Float)
-                }
-                addListener(object : android.animation.Animator.AnimatorListener {
-                    override fun onAnimationStart(animation: android.animation.Animator) {}
-                    override fun onAnimationEnd(animation: android.animation.Animator) {
-                        playNext(index + 1)
-                    }
-                    override fun onAnimationCancel(animation: android.animation.Animator) {}
-                    override fun onAnimationRepeat(animation: android.animation.Animator) {}
-                })
-                start()
-            }
-        }
-
-        playNext(0)
-    }
-
-
     private val itemSpacing = ITEM_SPACING.dp.px.toInt()
     private val topPadding = TOP_PADDING.dp.px.toInt()
+    private val scrollInterpolator = PathInterpolator(0.6f, 0f, 0.2f, 1f)
 
     private val lyrics: MutableList<LyricBase> = mutableListOf()
+    private val lineStartTimes: MutableList<Long> = mutableListOf()
+    private var currentLineIndex = -1
+    var durationMs: Long = 0L
+        private set
 
     fun updateLyrics(lyrics: List<LyricBase>) {
+        stopPlayback()
 
         this.lyrics.clear()
         this.lyrics.addAll(lyrics)
+        rebuildTimeline()
 
         forEach { child: View ->
-            child as LyricTextView
-            child.release()
+            (child as LyricTextView).release()
         }
         removeAllViews()
         lyrics.forEachIndexed { index, line ->
             val view = LyricTextView(context, line)
             view.alpha = currentAlpha ?: 1f
+            view.updateDelayedLineStyle(
+                index = index,
+                targetIndex = 0,
+                animated = false,
+                delayMs = 0L
+            )
             addView(view)
         }
 
+        currentLineIndex = -1
+        requestLayout()
     }
 
     var scrollViewHeight: Int = resources.displayMetrics.heightPixels
         set(value) {
+            if (field == value) return
             field = value
             requestLayout()
         }
+
+    fun stopPlayback() {
+        currentLineIndex = -1
+        forEach { child ->
+            child.animate().cancel()
+            child.translationY = 0f
+            (child as? LyricTextView)?.resetPlayback()
+            (child as? LyricTextView)?.setLineActive(false)
+            (child as? LyricTextView)?.resetLineStyle()
+        }
+    }
+
+    fun updatePlaybackPosition(scrollView: ScrollView, positionMs: Long) {
+        if (lyrics.isEmpty() || childCount == 0 || lineStartTimes.isEmpty()) return
+
+        scrollViewHeight = scrollView.height
+        val safePositionMs = positionMs.coerceAtLeast(0L)
+        val targetIndex = getCurrentLyricsLineIndex(safePositionMs)
+
+        if (targetIndex != currentLineIndex) {
+            scrollToLine(
+                scrollView = scrollView,
+                index = targetIndex,
+                animated = currentLineIndex != -1
+            )
+        }
+
+        val child = getChildAt(targetIndex) as? LyricTextView ?: return
+        val linePositionMs = safePositionMs - lineStartTimes[targetIndex]
+        updateLineProgress(child, lyrics[targetIndex], linePositionMs)
+    }
+
+    fun scrollToLine(scrollView: ScrollView, index: Int, animated: Boolean = true) {
+        if (index !in 0 until childCount) return
+
+        setCurrentLine(index, animated)
+
+        val currentOffset = scrollView.scrollY.toFloat()
+        val maxScrollOffset = (measuredHeight - scrollView.height).coerceAtLeast(0)
+        val targetOffset = (getChildAt(index).top - topPadding).coerceIn(0, maxScrollOffset).toFloat()
+        val deltaOffset = targetOffset - currentOffset
+
+        if (!animated || deltaOffset == 0f) {
+            scrollView.scrollTo(0, targetOffset.toInt())
+            forEach { child ->
+                child.animate().cancel()
+                child.translationY = 0f
+            }
+            return
+        }
+
+        scrollView.scrollTo(0, targetOffset.toInt())
+        forEachIndexed { childIndex, child ->
+            val currentTranslation = child.translationY
+            child.animate().cancel()
+            child.translationY = currentTranslation + deltaOffset
+            child.animate()
+                .translationY(0f)
+                .setDuration(SCROLL_ANIMATION_DURATION_MS)
+                .setInterpolator(scrollInterpolator)
+                .setStartDelay(getLineAnimationDelay(childIndex, index))
+                .start()
+        }
+    }
+
+    private fun setCurrentLine(index: Int, animated: Boolean) {
+        if (currentLineIndex == index) return
+        val shouldAnimate = animated && currentLineIndex != -1
+        val previousLineIndex = currentLineIndex
+        currentLineIndex = index
+        forEachIndexed { childIndex, child ->
+            val lyricTextView = child as? LyricTextView ?: return@forEachIndexed
+            if (childIndex == previousLineIndex && shouldAnimate) {
+                lyricTextView.animateLiftupProgressToRest(
+                    durationMs = SCROLL_ANIMATION_DURATION_MS,
+                    delayMs = getLineAnimationDelay(childIndex, index)
+                )
+            } else if (childIndex != index) {
+                lyricTextView.resetPlayback()
+            }
+            lyricTextView.setLineActive(childIndex == index)
+            lyricTextView.updateDelayedLineStyle(
+                index = childIndex,
+                targetIndex = index,
+                animated = shouldAnimate,
+                delayMs = getLineAnimationDelay(childIndex, index)
+            )
+        }
+    }
+
+    private fun getLineAnimationDelay(index: Int, targetIndex: Int): Long =
+        if (index < targetIndex) {
+            0L
+        } else {
+            ((index - targetIndex) * LINE_ANIMATION_DELAY_STEP_MS + LINE_ANIMATION_MIN_DELAY_MS)
+                .coerceAtMost(LINE_ANIMATION_MAX_DELAY_MS)
+        }
+
+    private fun updateLineProgress(child: LyricTextView, lyric: LyricBase, linePositionMs: Long) {
+        val syncedLyric = lyric as? SyncedLyric ?: return
+        val unitProgress = LyricTiming.resolveUnitProgress(
+            unitCount = syncedLyric.list.size,
+            relativeTime = syncedLyric.relativeTime,
+            linePositionMs = linePositionMs
+        ) ?: return
+
+        child.animate(
+            itemPos = unitProgress.index,
+            fraction = unitProgress.fraction,
+            linePositionMs = linePositionMs
+        )
+    }
+
+    private fun getCurrentLyricsLineIndex(positionMs: Long): Int {
+        val index = lineStartTimes.indexOfLast { it <= positionMs }
+        return index.coerceIn(0, lyrics.lastIndex)
+    }
+
+    private fun rebuildTimeline() {
+        lineStartTimes.clear()
+        var cursor = 0L
+        lyrics.forEach { lyric ->
+            lineStartTimes += cursor
+            cursor += LyricTiming.durationMs(lyric)
+        }
+        durationMs = cursor
+    }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         var top = topPadding
@@ -133,20 +207,32 @@ class LyricViewGroup @JvmOverloads constructor(
             maxWidth = maxOf(maxWidth, child.measuredWidth)
         }
 
-        val creatorHeight = if (lyrics.last() is Creator) getChildAt(childCount - 1).measuredHeight else 0
-        val lastRealLyricHeight = if (lyrics.last() is Creator)
-            getChildAt(childCount - 2).measuredHeight
-        else
-            getChildAt(childCount - 1).measuredHeight
+        if (childCount > 0) {
+            val creatorHeight = if (lyrics.lastOrNull() is Creator) {
+                getChildAt(childCount - 1).measuredHeight
+            } else {
+                0
+            }
+            val lastRealLyricHeight = if (lyrics.lastOrNull() is Creator && childCount >= 2) {
+                getChildAt(childCount - 2).measuredHeight
+            } else {
+                getChildAt(childCount - 1).measuredHeight
+            }
 
-        Log.d("TAG", "creatorHeight: $creatorHeight")
-
-        totalHeight += scrollViewHeight - creatorHeight - lastRealLyricHeight - topPadding
+            val bottomPadding =
+                (scrollViewHeight - creatorHeight - lastRealLyricHeight - topPadding).coerceAtLeast(0)
+            totalHeight += bottomPadding
+        }
 
         val width = resolveSize(maxWidth, widthMeasureSpec)
         val height = resolveSize(totalHeight, heightMeasureSpec)
 
         setMeasuredDimension(width, height)
+    }
+
+    override fun onDetachedFromWindow() {
+        stopPlayback()
+        super.onDetachedFromWindow()
     }
 
     private var currentAlpha: Float? = null
@@ -166,6 +252,10 @@ class LyricViewGroup @JvmOverloads constructor(
     companion object {
         const val ITEM_SPACING = 16
         const val TOP_PADDING = 48
-    }
 
+        private const val SCROLL_ANIMATION_DURATION_MS = 700L
+        private const val LINE_ANIMATION_MIN_DELAY_MS = 10L
+        private const val LINE_ANIMATION_DELAY_STEP_MS = 20L
+        private const val LINE_ANIMATION_MAX_DELAY_MS = 190L
+    }
 }
